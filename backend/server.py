@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 # SerpAPI import (after logger is defined)
 try:
-    from serpapi import GoogleSearch
+    import serpapi
     SERPAPI_AVAILABLE = True
 except ImportError:
     SERPAPI_AVAILABLE = False
@@ -233,20 +233,14 @@ async def search_with_serpapi(query: str, num_results: int = 10) -> List[dict]:
         return []
     
     try:
-        params = {
+        client = serpapi.Client(api_key=SERPAPI_API_KEY)
+        results = client.search({
             "q": query,
-            "api_key": SERPAPI_API_KEY,
+            "engine": "google",
             "num": min(num_results, 10),
             "gl": "us",
             "hl": "en"
-        }
-        
-        search = GoogleSearch(params)
-        results = search.get_dict()
-        
-        if "error" in results:
-            logger.error(f"SerpAPI error: {results['error']}")
-            return []
+        })
         
         opportunities = []
         organic_results = results.get("organic_results", [])
@@ -258,6 +252,7 @@ async def search_with_serpapi(query: str, num_results: int = 10) -> List[dict]:
                 "snippet": result.get("snippet", "")
             })
         
+        logger.info(f"SerpAPI returned {len(opportunities)} results for: {query}")
         return opportunities
         
     except Exception as e:
