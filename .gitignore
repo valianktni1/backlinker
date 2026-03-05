@@ -11,3 +11,7 @@ node_modules/
 .idea/
 test_reports/
 memory/
+-e 
+# Environment files
+*.env
+*.env.*
