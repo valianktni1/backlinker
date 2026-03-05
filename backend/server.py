@@ -36,6 +36,9 @@ JWT_EXPIRATION_HOURS = 24
 SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', '')
 
+# SerpAPI Configuration (100 free searches/month)
+SERPAPI_API_KEY = os.environ.get('SERPAPI_API_KEY', '')
+
 app = FastAPI(title="Backlink Builder API")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
@@ -43,6 +46,14 @@ security = HTTPBearer(auto_error=False)
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# SerpAPI import (after logger is defined)
+try:
+    from serpapi import GoogleSearch
+    SERPAPI_AVAILABLE = True
+except ImportError:
+    SERPAPI_AVAILABLE = False
+    logger.warning("SerpAPI not installed - using DuckDuckGo fallback")
 
 # ============= MODELS =============
 
@@ -216,88 +227,129 @@ async def check_domain_authority(domain: str) -> int:
     hash_val = int(hashlib.md5(domain.encode()).hexdigest(), 16)
     return (hash_val % 60) + 20  # Returns 20-80 range
 
+async def search_with_serpapi(query: str, num_results: int = 10) -> List[dict]:
+    """Search using SerpAPI (100 free searches/month) - most reliable"""
+    if not SERPAPI_AVAILABLE or not SERPAPI_API_KEY:
+        return []
+    
+    try:
+        params = {
+            "q": query,
+            "api_key": SERPAPI_API_KEY,
+            "num": min(num_results, 10),
+            "gl": "us",
+            "hl": "en"
+        }
+        
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        
+        if "error" in results:
+            logger.error(f"SerpAPI error: {results['error']}")
+            return []
+        
+        opportunities = []
+        organic_results = results.get("organic_results", [])
+        
+        for result in organic_results:
+            opportunities.append({
+                "title": result.get("title", ""),
+                "url": result.get("link", ""),
+                "snippet": result.get("snippet", "")
+            })
+        
+        return opportunities
+        
+    except Exception as e:
+        logger.error(f"SerpAPI exception: {e}")
+        return []
+
+
 async def find_guest_post_opportunities(query: str, niche: str = "", max_results: int = 20) -> List[dict]:
-    """Search for guest post opportunities using DuckDuckGo with proxy rotation"""
+    """Search for guest post opportunities - uses SerpAPI if configured, falls back to DuckDuckGo with proxies"""
     opportunities = []
+    seen_domains = set()
     
     # Build search queries for guest post opportunities
     search_queries = [
         f'{query} "write for us"',
         f'{query} "guest post"',
         f'{query} "contribute an article"',
-        f'{query} "submit a guest post"',
     ]
     
     if niche:
         search_queries.append(f'{niche} "write for us"')
-        search_queries.append(f'{niche} "guest post guidelines"')
     
-    seen_domains = set()
+    # Try SerpAPI first (most reliable, 100 free/month)
+    use_serpapi = SERPAPI_AVAILABLE and SERPAPI_API_KEY
     
     for search_query in search_queries:
         if len(opportunities) >= max_results:
             break
-            
-        try:
-            # Search using DuckDuckGo with proxy rotation
+        
+        results = []
+        
+        if use_serpapi:
+            # Use SerpAPI (Google results)
+            logger.info(f"Using SerpAPI for: {search_query}")
+            results = await search_with_serpapi(search_query, num_results=10)
+        
+        if not results:
+            # Fallback to DuckDuckGo with proxy rotation
+            logger.info(f"Using DuckDuckGo+Proxies for: {search_query}")
             results = await search_duckduckgo(search_query, max_results=10)
+        
+        for result in results:
+            url = result.get('url', '')
+            domain = extract_domain(url)
             
-            for result in results:
-                url = result.get('url', '')
-                domain = extract_domain(url)
+            if domain in seen_domains or not domain:
+                continue
+            
+            seen_domains.add(domain)
+            
+            # Check if it's likely a guest post page
+            title = result.get('title', '').lower()
+            snippet = result.get('snippet', '').lower()
+            
+            is_guest_post_page = any(phrase in title or phrase in snippet or phrase in url.lower() for phrase in [
+                'write for us', 'write-for-us', 'guest post', 'guest-post', 
+                'contribute', 'submit article', 'guest author', 'submission'
+            ])
+            
+            if is_guest_post_page:
+                da = await check_domain_authority(domain)
                 
-                # Skip if we've already seen this domain
-                if domain in seen_domains or not domain:
-                    continue
+                # Try to extract contact email from the page
+                contact_email = ""
+                try:
+                    page_html = await fetch_page(url, timeout=10, use_proxy=True)
+                    if page_html:
+                        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+                        emails = re.findall(email_pattern, page_html)
+                        if emails:
+                            contact_email = emails[0]
+                except Exception:
+                    pass
                 
-                seen_domains.add(domain)
+                opportunities.append({
+                    "id": str(uuid.uuid4()),
+                    "url": url,
+                    "domain": domain,
+                    "title": result.get('title', 'Guest Post Opportunity'),
+                    "niche": niche or query,
+                    "da_score": da,
+                    "status": "found",
+                    "contact_email": contact_email,
+                    "found_at": datetime.now(timezone.utc).isoformat(),
+                    "notes": f"Found via {'SerpAPI' if use_serpapi else 'DuckDuckGo'}: {search_query}",
+                    "source": "serpapi" if use_serpapi else "duckduckgo"
+                })
                 
-                # Check if it's likely a guest post page
-                title = result.get('title', '').lower()
-                snippet = result.get('snippet', '').lower()
-                
-                is_guest_post_page = any(phrase in title or phrase in snippet for phrase in [
-                    'write for us', 'guest post', 'contribute', 'submit article',
-                    'guest author', 'guest writer', 'submission guidelines'
-                ])
-                
-                if is_guest_post_page or 'write' in url.lower() or 'guest' in url.lower():
-                    da = await check_domain_authority(domain)
-                    
-                    # Try to extract contact email from the page
-                    contact_email = ""
-                    try:
-                        page_html = await fetch_page(url, timeout=10, use_proxy=True)
-                        if page_html:
-                            # Look for email addresses
-                            email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-                            emails = re.findall(email_pattern, page_html)
-                            if emails:
-                                contact_email = emails[0]
-                    except Exception:
-                        pass
-                    
-                    opportunities.append({
-                        "id": str(uuid.uuid4()),
-                        "url": url,
-                        "domain": domain,
-                        "title": result.get('title', 'Guest Post Opportunity'),
-                        "niche": niche or query,
-                        "da_score": da,
-                        "status": "found",
-                        "contact_email": contact_email,
-                        "found_at": datetime.now(timezone.utc).isoformat(),
-                        "notes": f"Found via search: {search_query}"
-                    })
-                    
-                    if len(opportunities) >= max_results:
-                        break
-                        
-        except Exception as e:
-            logger.error(f"Error searching for '{search_query}': {e}")
-            continue
+                if len(opportunities) >= max_results:
+                    break
     
-    # If we didn't find real results, add some known guest post sites as fallback
+    # Add known guest post sites as fallback if we found very few results
     if len(opportunities) < 3:
         fallback_sites = [
             {"domain": "medium.com", "title": "Write on Medium", "url": "https://medium.com/creators"},
@@ -320,7 +372,8 @@ async def find_guest_post_opportunities(query: str, niche: str = "", max_results
                     "status": "found",
                     "contact_email": "",
                     "found_at": datetime.now(timezone.utc).isoformat(),
-                    "notes": f"Known guest post site for: {query}"
+                    "notes": f"Known guest post site for: {query}",
+                    "source": "fallback"
                 })
     
     return opportunities
@@ -780,10 +833,15 @@ async def get_settings(user: dict = Depends(get_current_user)):
             "user_id": user["id"],
             "sendgrid_configured": bool(SENDGRID_API_KEY),
             "sender_email": SENDER_EMAIL,
+            "serpapi_configured": bool(SERPAPI_API_KEY),
             "your_name": user["name"],
             "your_website": "",
             "default_niche": ""
         }
+    else:
+        # Always update these from env
+        settings["sendgrid_configured"] = bool(SENDGRID_API_KEY)
+        settings["serpapi_configured"] = bool(SERPAPI_API_KEY)
     return settings
 
 @api_router.put("/settings")

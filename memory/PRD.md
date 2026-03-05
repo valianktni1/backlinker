@@ -83,13 +83,19 @@ Build an Automated Backlink Builder application with:
 - ✅ Full JWT authentication system
 - ✅ Dark mode UI with Manrope/Inter/JetBrains Mono fonts
 - ✅ Dashboard with stats overview
-- ✅ Guest Post Finder with DuckDuckGo search + proxy rotation
+- ✅ Guest Post Finder with **SerpAPI + DuckDuckGo fallback**
 - ✅ Broken Link Scanner with proxy rotation
 - ✅ Competitor Analysis
 - ✅ Directory Manager with 10 pre-seeded high-DA sites
 - ✅ Email Outreach with 3 templates
-- ✅ Settings page with SendGrid + Proxy status
+- ✅ Settings page with SendGrid + Proxy + SerpAPI status
 - ✅ **FREE Proxy Rotation** from 3 sources (ProxyScrape, Free-Proxy-List, GeoNode)
+- ✅ **SerpAPI Integration** (100 free Google searches/month)
+
+## Search Strategy (Tiered Approach)
+1. **SerpAPI** (if configured): Google search results - most reliable, 100 free/month
+2. **DuckDuckGo + Proxies** (fallback): Unlimited free searches via proxy rotation
+3. **Known Sites** (fallback): Pre-seeded list of popular guest post sites
 
 ## Proxy Rotation System
 The app includes automatic proxy rotation for web scraping:

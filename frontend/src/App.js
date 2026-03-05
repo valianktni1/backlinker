@@ -1112,6 +1112,33 @@ const SettingsPage = () => {
           </Card>
 
           <Card>
+            <h2 className="text-xl font-bold mb-4">Search Configuration</h2>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-[#1C1C1E] rounded-md">
+                <span className="text-sm">SerpAPI Status</span>
+                <Badge variant={settings.serpapi_configured ? "success" : "warning"}>
+                  {settings.serpapi_configured ? "Configured" : "Using DuckDuckGo"}
+                </Badge>
+              </div>
+              <div className="p-4 bg-[#3B82F6]/10 border border-[#3B82F6]/20 rounded-md">
+                <p className="text-sm text-[#3B82F6] mb-2">
+                  <strong>SerpAPI</strong> = Google results (100 free/month, most reliable)
+                </p>
+                <p className="text-sm text-[#A1A1AA]">
+                  <strong>DuckDuckGo + Proxies</strong> = Unlimited free fallback
+                </p>
+              </div>
+              {!settings.serpapi_configured && (
+                <div className="p-4 bg-[#22C55E]/10 border border-[#22C55E]/20 rounded-md">
+                  <p className="text-sm text-[#22C55E]">
+                    Get 100 free Google searches/month: Set SERPAPI_API_KEY in backend .env (get key at serpapi.com)
+                  </p>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
             <h2 className="text-xl font-bold mb-4">Email Configuration</h2>
             <div className="space-y-4">
               <div className="flex items-center justify-between p-3 bg-[#1C1C1E] rounded-md">
