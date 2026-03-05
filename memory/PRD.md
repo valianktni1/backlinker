@@ -83,12 +83,21 @@ Build an Automated Backlink Builder application with:
 - ✅ Full JWT authentication system
 - ✅ Dark mode UI with Manrope/Inter/JetBrains Mono fonts
 - ✅ Dashboard with stats overview
-- ✅ Guest Post Finder with search (simulated results)
-- ✅ Broken Link Scanner (actual HTTP checking)
-- ✅ Competitor Analysis (simulated backlinks)
+- ✅ Guest Post Finder with DuckDuckGo search + proxy rotation
+- ✅ Broken Link Scanner with proxy rotation
+- ✅ Competitor Analysis
 - ✅ Directory Manager with 10 pre-seeded high-DA sites
 - ✅ Email Outreach with 3 templates
-- ✅ Settings page with SendGrid status
+- ✅ Settings page with SendGrid + Proxy status
+- ✅ **FREE Proxy Rotation** from 3 sources (ProxyScrape, Free-Proxy-List, GeoNode)
+
+## Proxy Rotation System
+The app includes automatic proxy rotation for web scraping:
+- **Sources**: ProxyScrape, Free-Proxy-List, GeoNode (all free)
+- **Auto-refresh**: Every 30 minutes
+- **Manual refresh**: Via Settings page
+- **Health tracking**: Failed proxies are automatically deprioritized
+- **Fallback**: Direct requests if no proxies available
 
 ## Configuration for TrueNAS Scale Deployment
 

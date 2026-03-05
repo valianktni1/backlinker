@@ -16,6 +16,8 @@ import httpx
 from bs4 import BeautifulSoup
 import re
 from urllib.parse import urlparse, urljoin
+import random
+from proxy_manager import proxy_manager, fetch_with_proxy, search_duckduckgo
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -181,8 +183,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 # ============= SCRAPING HELPERS =============
 
-async def fetch_page(url: str, timeout: int = 10) -> Optional[str]:
+async def fetch_page(url: str, timeout: int = 10, use_proxy: bool = True) -> Optional[str]:
     """Fetch a webpage and return its HTML content"""
+    if use_proxy:
+        return await fetch_with_proxy(url, timeout=timeout)
+    
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             headers = {
@@ -212,39 +217,122 @@ async def check_domain_authority(domain: str) -> int:
     return (hash_val % 60) + 20  # Returns 20-80 range
 
 async def find_guest_post_opportunities(query: str, niche: str = "", max_results: int = 20) -> List[dict]:
-    """Search for guest post opportunities using Google search patterns"""
+    """Search for guest post opportunities using DuckDuckGo with proxy rotation"""
     opportunities = []
-    # Search patterns would be used for actual web scraping in production
-    # For demo, we use simulated results based on the query
-    sample_sites = [
-        {"domain": "techblog.example.com", "title": "Write for Us - Tech Blog", "niche": "technology"},
-        {"domain": "marketingpro.example.com", "title": "Guest Post Guidelines", "niche": "marketing"},
-        {"domain": "businessinsider.example.com", "title": "Contribute to Our Blog", "niche": "business"},
-        {"domain": "healthwise.example.com", "title": "Submit Your Article", "niche": "health"},
-        {"domain": "travelhub.example.com", "title": "Write for Travel Hub", "niche": "travel"},
+    
+    # Build search queries for guest post opportunities
+    search_queries = [
+        f'{query} "write for us"',
+        f'{query} "guest post"',
+        f'{query} "contribute an article"',
+        f'{query} "submit a guest post"',
     ]
     
-    for i, site in enumerate(sample_sites[:max_results]):
-        da = await check_domain_authority(site["domain"])
-        opportunities.append({
-            "id": str(uuid.uuid4()),
-            "url": f"https://{site['domain']}/write-for-us",
-            "domain": site["domain"],
-            "title": site["title"],
-            "niche": site["niche"],
-            "da_score": da,
-            "status": "found",
-            "contact_email": "",
-            "found_at": datetime.now(timezone.utc).isoformat(),
-            "notes": f"Found via search: {query}"
-        })
+    if niche:
+        search_queries.append(f'{niche} "write for us"')
+        search_queries.append(f'{niche} "guest post guidelines"')
+    
+    seen_domains = set()
+    
+    for search_query in search_queries:
+        if len(opportunities) >= max_results:
+            break
+            
+        try:
+            # Search using DuckDuckGo with proxy rotation
+            results = await search_duckduckgo(search_query, max_results=10)
+            
+            for result in results:
+                url = result.get('url', '')
+                domain = extract_domain(url)
+                
+                # Skip if we've already seen this domain
+                if domain in seen_domains or not domain:
+                    continue
+                
+                seen_domains.add(domain)
+                
+                # Check if it's likely a guest post page
+                title = result.get('title', '').lower()
+                snippet = result.get('snippet', '').lower()
+                
+                is_guest_post_page = any(phrase in title or phrase in snippet for phrase in [
+                    'write for us', 'guest post', 'contribute', 'submit article',
+                    'guest author', 'guest writer', 'submission guidelines'
+                ])
+                
+                if is_guest_post_page or 'write' in url.lower() or 'guest' in url.lower():
+                    da = await check_domain_authority(domain)
+                    
+                    # Try to extract contact email from the page
+                    contact_email = ""
+                    try:
+                        page_html = await fetch_page(url, timeout=10, use_proxy=True)
+                        if page_html:
+                            # Look for email addresses
+                            email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+                            emails = re.findall(email_pattern, page_html)
+                            if emails:
+                                contact_email = emails[0]
+                    except Exception:
+                        pass
+                    
+                    opportunities.append({
+                        "id": str(uuid.uuid4()),
+                        "url": url,
+                        "domain": domain,
+                        "title": result.get('title', 'Guest Post Opportunity'),
+                        "niche": niche or query,
+                        "da_score": da,
+                        "status": "found",
+                        "contact_email": contact_email,
+                        "found_at": datetime.now(timezone.utc).isoformat(),
+                        "notes": f"Found via search: {search_query}"
+                    })
+                    
+                    if len(opportunities) >= max_results:
+                        break
+                        
+        except Exception as e:
+            logger.error(f"Error searching for '{search_query}': {e}")
+            continue
+    
+    # If we didn't find real results, add some known guest post sites as fallback
+    if len(opportunities) < 3:
+        fallback_sites = [
+            {"domain": "medium.com", "title": "Write on Medium", "url": "https://medium.com/creators"},
+            {"domain": "dev.to", "title": "Dev.to - Write for Us", "url": "https://dev.to/about"},
+            {"domain": "hackernoon.com", "title": "HackerNoon - Submit Story", "url": "https://hackernoon.com/signup"},
+            {"domain": "dzone.com", "title": "DZone - Contribute", "url": "https://dzone.com/pages/contribute"},
+            {"domain": "smashingmagazine.com", "title": "Smashing Magazine - Write for Us", "url": "https://www.smashingmagazine.com/write-for-us/"},
+        ]
+        
+        for site in fallback_sites:
+            if site["domain"] not in seen_domains and len(opportunities) < max_results:
+                da = await check_domain_authority(site["domain"])
+                opportunities.append({
+                    "id": str(uuid.uuid4()),
+                    "url": site["url"],
+                    "domain": site["domain"],
+                    "title": site["title"],
+                    "niche": niche or "general",
+                    "da_score": da,
+                    "status": "found",
+                    "contact_email": "",
+                    "found_at": datetime.now(timezone.utc).isoformat(),
+                    "notes": f"Known guest post site for: {query}"
+                })
     
     return opportunities
 
 async def find_broken_links(url: str, max_depth: int = 1) -> List[dict]:
-    """Find broken links on a webpage"""
+    """Find broken links on a webpage using proxy rotation"""
     broken_links = []
-    html = await fetch_page(url)
+    html = await fetch_page(url, use_proxy=True)
+    
+    if not html:
+        # Try without proxy as fallback
+        html = await fetch_page(url, use_proxy=False)
     
     if not html:
         return broken_links
@@ -253,26 +341,59 @@ async def find_broken_links(url: str, max_depth: int = 1) -> List[dict]:
     links = soup.find_all('a', href=True)
     source_domain = extract_domain(url)
     
-    for link in links[:50]:  # Limit to prevent overload
+    # Get a proxy for checking links
+    proxy = await proxy_manager.get_proxy()
+    proxy_config = {"http://": proxy.url, "https://": proxy.url} if proxy else None
+    
+    checked = 0
+    for link in links:
+        if checked >= 30:  # Limit to prevent overload
+            break
+            
         href = link.get('href', '')
-        if href.startswith('http'):
-            try:
-                async with httpx.AsyncClient(timeout=5) as client:
-                    response = await client.head(href, follow_redirects=True)
-                    if response.status_code >= 400:
-                        da = await check_domain_authority(source_domain)
-                        broken_links.append({
-                            "id": str(uuid.uuid4()),
-                            "source_url": url,
-                            "source_domain": source_domain,
-                            "broken_url": href,
-                            "anchor_text": link.get_text(strip=True)[:100],
-                            "da_score": da,
-                            "status": "found",
-                            "found_at": datetime.now(timezone.utc).isoformat()
-                        })
-            except Exception:
-                pass
+        
+        # Skip internal links, anchors, javascript, mailto
+        if not href.startswith('http') or href.startswith(f'http://{source_domain}') or href.startswith(f'https://{source_domain}'):
+            continue
+        if 'javascript:' in href or 'mailto:' in href or '#' == href[0]:
+            continue
+            
+        try:
+            async with httpx.AsyncClient(timeout=8, proxies=proxy_config, follow_redirects=True) as client:
+                response = await client.head(href)
+                checked += 1
+                
+                if response.status_code >= 400:
+                    da = await check_domain_authority(source_domain)
+                    broken_links.append({
+                        "id": str(uuid.uuid4()),
+                        "source_url": url,
+                        "source_domain": source_domain,
+                        "broken_url": href,
+                        "anchor_text": link.get_text(strip=True)[:100],
+                        "da_score": da,
+                        "status": "found",
+                        "found_at": datetime.now(timezone.utc).isoformat(),
+                        "http_status": response.status_code
+                    })
+        except httpx.TimeoutException:
+            # Timeout might indicate a broken link
+            da = await check_domain_authority(source_domain)
+            broken_links.append({
+                "id": str(uuid.uuid4()),
+                "source_url": url,
+                "source_domain": source_domain,
+                "broken_url": href,
+                "anchor_text": link.get_text(strip=True)[:100],
+                "da_score": da,
+                "status": "found",
+                "found_at": datetime.now(timezone.utc).isoformat(),
+                "http_status": "timeout"
+            })
+            checked += 1
+        except Exception:
+            checked += 1
+            pass
     
     return broken_links
 
@@ -680,6 +801,20 @@ async def update_settings(updates: dict, user: dict = Depends(get_current_user))
 @api_router.get("/")
 async def root():
     return {"message": "Backlink Builder API", "version": "1.0.0"}
+
+# ============= PROXY ROUTES =============
+
+@api_router.get("/proxy/stats")
+async def get_proxy_stats(user: dict = Depends(get_current_user)):
+    """Get proxy pool statistics"""
+    stats = proxy_manager.get_stats()
+    return stats
+
+@api_router.post("/proxy/refresh")
+async def refresh_proxies(user: dict = Depends(get_current_user)):
+    """Force refresh the proxy pool"""
+    count = await proxy_manager.refresh_proxies(force=True)
+    return {"success": True, "proxy_count": count}
 
 # Include router and middleware
 app.include_router(api_router)

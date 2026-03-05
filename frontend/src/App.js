@@ -997,21 +997,26 @@ const OutreachPage = () => {
 
 const SettingsPage = () => {
   const [settings, setSettings] = useState({});
+  const [proxyStats, setProxyStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const { user } = useAuth();
+  const [refreshingProxies, setRefreshingProxies] = useState(false);
 
   useEffect(() => {
-    const fetchSettings = async () => {
+    const fetchData = async () => {
       try {
-        const { data } = await apiClient.get("/settings");
-        setSettings(data);
+        const [settingsRes, proxyRes] = await Promise.all([
+          apiClient.get("/settings"),
+          apiClient.get("/proxy/stats")
+        ]);
+        setSettings(settingsRes.data);
+        setProxyStats(proxyRes.data);
       } catch (err) {
         toast.error("Failed to load settings");
       }
       setLoading(false);
     };
-    fetchSettings();
+    fetchData();
   }, []);
 
   const handleSave = async (e) => {
@@ -1024,6 +1029,19 @@ const SettingsPage = () => {
       toast.error("Save failed");
     }
     setSaving(false);
+  };
+
+  const handleRefreshProxies = async () => {
+    setRefreshingProxies(true);
+    try {
+      const { data } = await apiClient.post("/proxy/refresh");
+      toast.success(`Loaded ${data.proxy_count} proxies!`);
+      const proxyRes = await apiClient.get("/proxy/stats");
+      setProxyStats(proxyRes.data);
+    } catch (err) {
+      toast.error("Failed to refresh proxies");
+    }
+    setRefreshingProxies(false);
   };
 
   if (loading) return <div className="flex items-center justify-center h-64"><RefreshCw className="animate-spin text-[#22C55E]" size={32} /></div>;
@@ -1058,27 +1076,63 @@ const SettingsPage = () => {
           </form>
         </Card>
 
-        <Card>
-          <h2 className="text-xl font-bold mb-4">Email Configuration</h2>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-3 bg-[#1C1C1E] rounded-md">
-              <span className="text-sm">SendGrid Status</span>
-              <Badge variant={settings.sendgrid_configured ? "success" : "error"}>
-                {settings.sendgrid_configured ? "Configured" : "Not Configured"}
-              </Badge>
-            </div>
-            <div>
-              <label className="block text-sm text-[#A1A1AA] mb-1.5">Sender Email</label>
-              <Input value={settings.sender_email || ""} disabled className="bg-[#1C1C1E]" />
-              <p className="text-xs text-[#52525B] mt-1">Set via SENDER_EMAIL environment variable</p>
-            </div>
-            <div className="p-4 bg-[#22C55E]/10 border border-[#22C55E]/20 rounded-md">
-              <p className="text-sm text-[#22C55E]">
-                To enable email outreach, set SENDGRID_API_KEY and SENDER_EMAIL in your backend .env file.
+        <div className="space-y-6">
+          <Card>
+            <h2 className="text-xl font-bold mb-4">Proxy Configuration</h2>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-[#1C1C1E] rounded-md">
+                <span className="text-sm">Total Proxies</span>
+                <Badge variant={proxyStats?.total_proxies > 0 ? "success" : "error"}>
+                  {proxyStats?.total_proxies || 0}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-[#1C1C1E] rounded-md">
+                <span className="text-sm">Healthy Proxies</span>
+                <Badge variant={proxyStats?.healthy_proxies > 50 ? "success" : "warning"}>
+                  {proxyStats?.healthy_proxies || 0}
+                </Badge>
+              </div>
+              <div className="p-3 bg-[#1C1C1E] rounded-md">
+                <span className="text-sm text-[#A1A1AA]">Sources: </span>
+                <span className="text-sm font-mono">{proxyStats?.sources?.join(", ") || "None"}</span>
+              </div>
+              {proxyStats?.last_refresh && (
+                <p className="text-xs text-[#52525B]">
+                  Last refresh: {new Date(proxyStats.last_refresh).toLocaleString()}
+                </p>
+              )}
+              <Button variant="secondary" onClick={handleRefreshProxies} disabled={refreshingProxies} className="w-full" data-testid="refresh-proxies-btn">
+                {refreshingProxies ? <RefreshCw className="animate-spin" size={18} /> : <RefreshCw size={18} />}
+                Refresh Proxy Pool
+              </Button>
+              <p className="text-xs text-[#52525B]">
+                Proxies are automatically refreshed every 30 minutes. Use free proxy rotation for web scraping.
               </p>
             </div>
-          </div>
-        </Card>
+          </Card>
+
+          <Card>
+            <h2 className="text-xl font-bold mb-4">Email Configuration</h2>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-[#1C1C1E] rounded-md">
+                <span className="text-sm">SendGrid Status</span>
+                <Badge variant={settings.sendgrid_configured ? "success" : "error"}>
+                  {settings.sendgrid_configured ? "Configured" : "Not Configured"}
+                </Badge>
+              </div>
+              <div>
+                <label className="block text-sm text-[#A1A1AA] mb-1.5">Sender Email</label>
+                <Input value={settings.sender_email || ""} disabled className="bg-[#1C1C1E]" />
+                <p className="text-xs text-[#52525B] mt-1">Set via SENDER_EMAIL environment variable</p>
+              </div>
+              <div className="p-4 bg-[#22C55E]/10 border border-[#22C55E]/20 rounded-md">
+                <p className="text-sm text-[#22C55E]">
+                  To enable email outreach, set SENDGRID_API_KEY and SENDER_EMAIL in your backend .env file.
+                </p>
+              </div>
+            </div>
+          </Card>
+        </div>
       </div>
     </div>
   );
