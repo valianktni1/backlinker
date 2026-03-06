@@ -1,12 +1,4 @@
-version: '3.8'
-
-# =============================================================
-# TrueNAS Scale - Backlinker Deployment
-# =============================================================
-# Repo: https://github.com/valianktni1/backlinker
-# Dataset: /mnt/apps/backlinkgen
-# Port: 3333
-# =============================================================
+name: backlinkgen
 
 services:
   # -----------------------------------------------------------
@@ -14,12 +6,12 @@ services:
   # -----------------------------------------------------------
   mongodb:
     image: mongo:7.0
-    container_name: backlinker-mongodb
+    container_name: backlinkgen-mongodb
     restart: unless-stopped
     volumes:
       - /mnt/apps/backlinkgen/mongodb:/data/db
     networks:
-      - backlinker-net
+      - backlinkgen-net
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
@@ -31,7 +23,7 @@ services:
   # -----------------------------------------------------------
   backend:
     image: python:3.11-slim
-    container_name: backlinker-backend
+    container_name: backlinkgen-backend
     restart: unless-stopped
     working_dir: /app
     depends_on:
@@ -50,7 +42,7 @@ services:
       sh -c "pip install --no-cache-dir -r requirements.txt &&
              uvicorn server:app --host 0.0.0.0 --port 8001"
     networks:
-      - backlinker-net
+      - backlinkgen-net
     healthcheck:
       test: curl -f http://localhost:8001/api/ || exit 1
       interval: 30s
@@ -63,7 +55,7 @@ services:
   # -----------------------------------------------------------
   frontend:
     image: nginx:alpine
-    container_name: backlinker-frontend
+    container_name: backlinkgen-frontend
     restart: unless-stopped
     depends_on:
       backend:
@@ -74,8 +66,8 @@ services:
       - /mnt/apps/backlinkgen/repo/frontend/build:/usr/share/nginx/html:ro
       - /mnt/apps/backlinkgen/repo/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
-      - backlinker-net
+      - backlinkgen-net
 
 networks:
-  backlinker-net:
+  backlinkgen-net:
     driver: bridge
