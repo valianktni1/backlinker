@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: backlinker-mongodb
+    restart: unless-stopped
+    volumes:
+      - /mnt/apps/backlinkgen/mongodb:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=backlink_builder
+    networks:
+      - backlinker-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: /mnt/apps/backlinkgen/repo/backend
+      dockerfile: Dockerfile
+    container_name: backlinker-backend
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - DB_NAME=backlink_builder
+      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-secure-secret-key}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+      - SENDER_EMAIL=${SENDER_EMAIL:-}
+      - SERPAPI_API_KEY=${SERPAPI_API_KEY:-}
+    volumes:
+      - /mnt/apps/backlinkgen/backend_logs:/app/logs
+    networks:
+      - backlinker-network
+    healthcheck:
+      test: curl -f http://localhost:8001/api/ || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: /mnt/apps/backlinkgen/repo/frontend
+      dockerfile: Dockerfile
+      args:
+        - REACT_APP_BACKEND_URL=${EXTERNAL_URL:-http://localhost:3333}
+    container_name: backlinker-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3333:80"
+    networks:
+      - backlinker-network
+
+networks:
+  backlinker-network:
+    driver: bridge

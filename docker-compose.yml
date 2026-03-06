@@ -1,64 +1,81 @@
 version: '3.8'
 
+# =============================================================
+# TrueNAS Scale - Backlinker Deployment
+# =============================================================
+# Repo: https://github.com/valianktni1/backlinker
+# Dataset: /mnt/apps/backlinkgen
+# Port: 3333
+# =============================================================
+
 services:
+  # -----------------------------------------------------------
+  # MongoDB Database
+  # -----------------------------------------------------------
   mongodb:
     image: mongo:7.0
-    container_name: linkbuilder-mongodb
+    container_name: backlinker-mongodb
     restart: unless-stopped
     volumes:
-      - mongodb_data:/data/db
-    environment:
-      - MONGO_INITDB_DATABASE=backlink_builder
+      - /mnt/apps/backlinkgen/mongodb:/data/db
     networks:
-      - linkbuilder-network
+      - backlinker-net
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # -----------------------------------------------------------
+  # Backend API (FastAPI)
+  # -----------------------------------------------------------
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: linkbuilder-backend
+    image: python:3.11-slim
+    container_name: backlinker-backend
     restart: unless-stopped
+    working_dir: /app
     depends_on:
       mongodb:
         condition: service_healthy
     environment:
       - MONGO_URL=mongodb://mongodb:27017
       - DB_NAME=backlink_builder
-      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-secure-secret-key}
+      - JWT_SECRET=${JWT_SECRET}
       - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
       - SENDER_EMAIL=${SENDER_EMAIL:-}
       - SERPAPI_API_KEY=${SERPAPI_API_KEY:-}
+    volumes:
+      - /mnt/apps/backlinkgen/repo/backend:/app
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             uvicorn server:app --host 0.0.0.0 --port 8001"
     networks:
-      - linkbuilder-network
+      - backlinker-net
     healthcheck:
       test: curl -f http://localhost:8001/api/ || exit 1
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 60s
 
+  # -----------------------------------------------------------
+  # Frontend (React + Nginx)
+  # -----------------------------------------------------------
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        - REACT_APP_BACKEND_URL=${EXTERNAL_URL:-http://localhost:8080}
-    container_name: linkbuilder-frontend
+    image: nginx:alpine
+    container_name: backlinker-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "${PORT:-8080}:80"
+      - "3333:80"
+    volumes:
+      - /mnt/apps/backlinkgen/repo/frontend/build:/usr/share/nginx/html:ro
+      - /mnt/apps/backlinkgen/repo/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
-      - linkbuilder-network
-
-volumes:
-  mongodb_data:
+      - backlinker-net
 
 networks:
-  linkbuilder-network:
+  backlinker-net:
     driver: bridge
